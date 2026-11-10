@@ -1,0 +1,2 @@
+- Prefers a plan-first workflow: explore the codebase, present a plan, and wait for validation/approval before implementing fixes. Confidence: 0.9
+- Communicates in Spanish. Confidence: 0.8

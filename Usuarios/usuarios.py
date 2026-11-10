@@ -1,38 +1,34 @@
 import hashlib
-import os
-import customtkinter as ctk
 import sqlite3
-import hashlib
+
+import customtkinter as ctk
+
+from kernel.config import ensure_user_dirs
+from kernel.db import get_connection
+
 
 def encriptar_contrasena(contrasena):
     return hashlib.sha256(contrasena.encode()).hexdigest()
 
+
 def guardar_credenciales(usuario, contrasena, rol):
-    conn = sqlite3.connect('usuarios.db')
+    conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO usuarios VALUES (?, ?, ?)", (usuario, encriptar_contrasena(contrasena), rol))
-    conn.commit()
-    conn.close()
-    ruta_base = "C:/Users/mateo/OneDrive/Documentos/Sistema Operativo/users/" + usuario  # Adjust the path as needed
-    subcarpetas = ["Documentos", "Musica", "Descargas", "Imágenes"]
-
     try:
-            # Crear la carpeta base del usuario
-            os.makedirs(ruta_base, exist_ok=True)
+        cursor.execute(
+            "INSERT INTO usuarios VALUES (?, ?, ?)",
+            (usuario, encriptar_contrasena(contrasena), rol),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
-            # Crear subcarpetas dentro de la carpeta del usuario
-            for carpeta in subcarpetas:
-                os.makedirs(os.path.join(ruta_base, carpeta), exist_ok=True)
-            print("Credenciales guardadas con éxito.")
-    except Exception as e:
-        print(f"Error al crear carpetas para el usuario {usuario}: {e}")
-
-
+    ensure_user_dirs(usuario)
 
 
 def cargar_credenciales():
     credenciales = {}
-    conn = sqlite3.connect('usuarios.db')
+    conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM usuarios")
     for usuario, contrasena_hash, rol in cursor.fetchall():
@@ -42,24 +38,29 @@ def cargar_credenciales():
 
 
 def verificar_credenciales(usuario, contrasena):
-    conn = sqlite3.connect('usuarios.db')
+    conn = get_connection()
     cursor = conn.cursor()
-
-    cursor.execute("SELECT contrasena, rol FROM usuarios WHERE usuario=?", (usuario,))
+    cursor.execute("SELECT contrasena FROM usuarios WHERE usuario=?", (usuario,))
     resultado = cursor.fetchone()
-
     conn.close()
 
-    if resultado and resultado[0] == encriptar_contrasena(contrasena):
-        return True
-    return False
+    return bool(resultado and resultado[0] == encriptar_contrasena(contrasena))
+
+
+def obtener_rol(usuario):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rol FROM usuarios WHERE usuario=?", (usuario,))
+    resultado = cursor.fetchone()
+    conn.close()
+    return resultado[0] if resultado else None
+
 
 def abrir_ventana_crear_usuario(parent):
     ventana_crear_usuario = ctk.CTkToplevel(parent)
     ventana_crear_usuario.title("Crear Nuevo Usuario")
     ventana_crear_usuario.geometry("400x400")
-    
-    ventana_crear_usuario.attributes('-topmost', True)
+    ventana_crear_usuario.attributes("-topmost", True)
 
     etiqueta_usuario = ctk.CTkLabel(ventana_crear_usuario, text="Nombre de Usuario", font=("Arial", 16))
     etiqueta_usuario.pack(pady=10)
@@ -82,22 +83,27 @@ def abrir_ventana_crear_usuario(parent):
     etiqueta_resultado = ctk.CTkLabel(ventana_crear_usuario, text="")
     etiqueta_resultado.pack(pady=10)
 
-    boton_guardar = ctk.CTkButton(
-        ventana_crear_usuario, 
-        text="Guardar Usuario", 
-        command=lambda: guardar_usuario(entry_nuevo_usuario, entry_nueva_contrasena, combo_rol, etiqueta_resultado, ventana_crear_usuario)
-    )
-    boton_guardar.pack(pady=10)
-
-    def guardar_usuario(entry_usuario, entry_contrasena, combo_rol, etiqueta_resultado, ventana_crear_usuario):
-        usuario = entry_usuario.get()
-        contrasena = entry_contrasena.get()
+    def guardar_usuario():
+        usuario = entry_nuevo_usuario.get().strip()
+        contrasena = entry_nueva_contrasena.get()
         rol = combo_rol.get()
 
-        if usuario and contrasena and rol:
-            guardar_credenciales(usuario, contrasena, rol)
-            etiqueta_resultado.configure(text="Usuario creado exitosamente.")
-            ventana_crear_usuario.destroy()
-        else:
-            etiqueta_resultado.configure(text="Por favor ingrese un usuario, una contraseña y seleccione un rol.")
+        if not (usuario and contrasena and rol):
+            etiqueta_resultado.configure(text="Ingrese usuario, contraseña y rol.")
+            return
 
+        try:
+            guardar_credenciales(usuario, contrasena, rol)
+        except sqlite3.IntegrityError:
+            etiqueta_resultado.configure(text="Ese usuario ya existe.")
+            return
+
+        etiqueta_resultado.configure(text="Usuario creado exitosamente.")
+        ventana_crear_usuario.destroy()
+
+    boton_guardar = ctk.CTkButton(
+        ventana_crear_usuario,
+        text="Guardar Usuario",
+        command=guardar_usuario,
+    )
+    boton_guardar.pack(pady=10)

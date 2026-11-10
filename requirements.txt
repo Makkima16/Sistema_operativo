@@ -1,0 +1,13 @@
+customtkinter
+Pillow
+psutil
+requests
+pywebview
+pygame
+PyMuPDF
+python-docx
+fpdf2
+openpyxl
+yt-dlp
+opencv-python
+moviepy

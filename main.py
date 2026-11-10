@@ -1,9 +1,7 @@
 from Inicio.inicioSesion import iniciar_interfaz
-from kernel.bases import create_database
-import kernel.bases
-import os
-if __name__ == "__main__":
-    db_path = os.path.join(os.path.dirname(kernel.bases.__file__), kernel.bases.DB_PATH)
-    create_database(db_path)
+from kernel.config import DB_PATH
+from kernel.db import create_database
 
-    iniciar_interfaz() 
+if __name__ == "__main__":
+    create_database(DB_PATH)
+    iniciar_interfaz()

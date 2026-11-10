@@ -1,115 +1,117 @@
 import os
-import cv2
+import time
 import tkinter as tk
+
+import cv2
+import customtkinter as ctk
 import pygame
 from tkinter import messagebox
-from moviepy.editor import VideoFileClip
-from Recursos.recursos import actualizar_lista_procesos, procesos_activos  # Asegúrate de tener esta función importada
+
+from kernel import config, procesos
+
+try:
+    from moviepy import VideoFileClip
+except ImportError:
+    from moviepy.editor import VideoFileClip
+
 
 def abrir_video(archivo_video, usuario):
     if not archivo_video:
         messagebox.showerror("Error", "No se seleccionó un archivo de video válido.")
         return
 
-    # Obtener la carpeta donde está el video
-    carpeta_videos = r"C:/Users/mateo/OneDrive/Documentos/Sistema Operativo/users/" + usuario + "/videos"
-    if not os.path.exists(carpeta_videos):
-        messagebox.showerror("Error", "La carpeta de videos no existe.")
-        return
+    carpeta_videos = str(config.get_user_dir(usuario) / "Videos")
+    os.makedirs(carpeta_videos, exist_ok=True)
 
-    procesos_activos.append("Visor de videos")  # Asegúrate de que procesos_activos esté definido
-    try:
-        actualizar_lista_procesos()  # Actualizar la visualización de procesos
-    except ValueError:
-        print("No se pudo actualizar el proceso")
-    except Exception as e:
-        print(f"Ocurrió un error con el gestor: {e}")      
-    # Obtener el nombre del archivo de video sin la extensión
-    nombre_video = os.path.splitext(os.path.basename(archivo_video))[0]
+    procesos.register("Visor de videos")
 
-    # Crear la ruta del archivo de audio en la misma carpeta que el video
-    archivo_audio = os.path.join(carpeta_videos, nombre_video + ".wav")
-
-    # Crear una ventana para mostrar el video
-    ventana_video = tk.Tk()
+    ventana_video = ctk.CTkToplevel()
     ventana_video.title("Visualizador de Video")
+    ventana_video.resizable(False, False)
 
-    # Crear un objeto de captura de video con OpenCV
     cap = cv2.VideoCapture(archivo_video)
-
     if not cap.isOpened():
+        procesos.unregister("Visor de videos")
+        ventana_video.destroy()
         messagebox.showerror("Error", "No se pudo abrir el archivo de video.")
         return
 
-    # Obtener las dimensiones del primer cuadro del video
-    ancho_video = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    alto_video = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    ancho_video = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 800
+    alto_video = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 600
 
-    # Crear un lienzo donde se mostrará el video
     lienzo = tk.Canvas(ventana_video, width=ancho_video, height=alto_video)
     lienzo.pack(fill="both", expand=True)
 
-    # Usar moviepy para manejar tanto el video como el audio
-    video_clip = VideoFileClip(archivo_video)
-    audio_clip = video_clip.audio  # Extraer el audio del video
+    archivo_audio = os.path.join(
+        carpeta_videos, os.path.splitext(os.path.basename(archivo_video))[0] + ".wav"
+    )
 
-    # Guardar el audio extraído en la misma carpeta
-    audio_clip.write_audiofile(archivo_audio)
+    audio_available = False
+    video_clip = None
+    try:
+        video_clip = VideoFileClip(archivo_video)
+        audio_clip = video_clip.audio
+        if audio_clip is not None:
+            try:
+                audio_clip.write_audiofile(archivo_audio, logger=None)
+            except AttributeError:
+                audio_clip.to_audiofile(archivo_audio, logger=None)
+            audio_available = os.path.exists(archivo_audio)
+    except Exception:
+        audio_available = False
 
-    # Inicializar pygame para reproducir el audio
-    pygame.mixer.init(frequency=audio_clip.fps)
-
-    # Reproducir el audio con pygame
-    pygame.mixer.music.load(archivo_audio)
-    pygame.mixer.music.play()
-
-    # Función para actualizar el video en el lienzo
-    def actualizar_video():
-        current_time = pygame.mixer.music.get_pos() / 1000  # Tiempo actual del audio (en segundos)
-        
-        # Asegurarse de que el video se reproduce en el tiempo adecuado
-        cap.set(cv2.CAP_PROP_POS_MSEC, current_time * 1000)  # Establecer la posición actual del video según el tiempo del audio
-        
-        ret, frame = cap.read()
-        if ret:
-            # Redimensionar el frame al tamaño de la ventana
-            frame_resized = cv2.resize(frame, (ventana_video.winfo_width(), ventana_video.winfo_height()))
-
-            # Convertir la imagen a formato RGB
-            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-
-            # Convertir el frame a un formato que pueda ser mostrado en tkinter
-            foto = tk.PhotoImage(master=lienzo, width=frame_rgb.shape[1], height=frame_rgb.shape[0], data=cv2.imencode('.png', frame_rgb)[1].tobytes())
-
-            # Mostrar la imagen en el lienzo
-            lienzo.create_image(0, 0, anchor=tk.NW, image=foto)
-            lienzo.image = foto  # Mantener la referencia de la imagen
-
-            # Acelerar la actualización del video para sincronizar con el audio
-            lienzo.after(30, actualizar_video)  # Mantener la sincronización más precisa
-
-        else:
-            cap.release()  # Liberar los recursos cuando el video termine
-            pygame.mixer.music.stop()  # Detener el audio cuando el video termine
-
-    # Función para cerrar el video y detener el audio
-    def cerrar_video():
-        cap.release()  # Liberar los recursos
-        pygame.mixer.music.stop()  # Detener el audio
+    if audio_available:
         try:
-            actualizar_lista_procesos()  # Actualiza la lista de procesos al cerrar
-        except ValueError:
-            print("El visor de videos no estaba en la lista de procesos activos.")
-        except Exception as e:
-            print(f"Ocurrió un error al cerrar el visor: {e}")
-        finally:
-            procesos_activos.remove("Visor de videos")
-            ventana_video.destroy()
-    # Asociar la función de cierre a la ventana
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            pygame.mixer.music.load(archivo_audio)
+            pygame.mixer.music.play()
+        except Exception:
+            audio_available = False
+
+    inicio = time.time()
+
+    def cerrar_video():
+        cap.release()
+        if video_clip is not None:
+            try:
+                video_clip.close()
+            except Exception:
+                pass
+        if pygame.mixer.get_init():
+            pygame.mixer.music.stop()
+        procesos.unregister("Visor de videos")
+        ventana_video.destroy()
+
+    def actualizar_video():
+        if not ventana_video.winfo_exists():
+            return
+
+        if audio_available and pygame.mixer.music.get_busy():
+            tiempo_actual = pygame.mixer.music.get_pos() / 1000.0
+            if tiempo_actual < 0:
+                tiempo_actual = 0
+        else:
+            tiempo_actual = time.time() - inicio
+
+        cap.set(cv2.CAP_PROP_POS_MSEC, tiempo_actual * 1000)
+        ret, frame = cap.read()
+
+        if ret:
+            frame_resized = cv2.resize(frame, (ancho_video, alto_video))
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            data = cv2.imencode(".png", frame_rgb)[1].tobytes()
+            foto = tk.PhotoImage(
+                master=lienzo,
+                width=frame_rgb.shape[1],
+                height=frame_rgb.shape[0],
+                data=data,
+            )
+            lienzo.create_image(0, 0, anchor=tk.NW, image=foto)
+            lienzo.image = foto
+            lienzo.after(30, actualizar_video)
+        else:
+            cerrar_video()
+
     ventana_video.protocol("WM_DELETE_WINDOW", cerrar_video)
-
-    # Iniciar la reproducción del video
     actualizar_video()
-
-    # Mostrar la ventana de video
-    ventana_video.mainloop()

@@ -1,6 +1,5 @@
 /.venv
 __pycache__
 credenciales.txt
-imagenes/
 usuarios.db
 users/

@@ -1,98 +1,68 @@
-import os
-import fitz  # PyMuPDF para visualizar PDFs
-import customtkinter as ctk
-from tkinter import Listbox, messagebox, Canvas, Scrollbar, ttk
-from PIL import Image, ImageTk  # Importar ImageTk para mostrar imágenes
-from docx import Document  # Asegúrate de tener la biblioteca python-docx instalada
-from fpdf import FPDF  # Asegúrate de tener la biblioteca fpdf instalada
 import csv
-from openpyxl import Workbook  # Asegúrate de tener la biblioteca openpyxl instalada
-from Recursos.recursos import actualizar_lista_procesos, procesos_activos  # Asegúrate de tener esta función importada
-import sqlite3
-from gestor.funciones.edicion import abrir_txt  # Asegúrate de que esté correctamente importada
+import os
+import shutil
+
+import customtkinter as ctk
+import fitz
+from docx import Document
+from fpdf import FPDF
+from openpyxl import Workbook
+from PIL import Image, ImageTk
+from tkinter import ACTIVE, END, Canvas, Listbox, Scrollbar, messagebox, ttk
+
+from Usuarios.usuarios import obtener_rol
 from gestor.funciones.descarga_videos import ventana_descarga_video
-from gestor.funciones.visor_videos import abrir_video
+from gestor.funciones.edicion import abrir_txt
+from gestor.funciones.reproductor_audio import abrir_reproductor_audio
 from gestor.funciones.visor_imagenes import abrir_visor_imagenes
+from gestor.funciones.visor_videos import abrir_video
+from kernel import config, procesos
 
 gestor_abierto = False
-gestor = None  # Esta será la referencia de la ventana del gestor
 
 
-def obtener_rol(usuario):
-    """Obtiene el rol de un usuario a partir de la base de datos.
+def dentro_de(ruta, base):
+    try:
+        return os.path.commonpath([os.path.abspath(ruta), os.path.abspath(base)]) == os.path.abspath(base)
+    except ValueError:
+        return False
 
-    Args:
-        usuario (str): Nombre de usuario.
 
-    Returns:
-        str: Rol del usuario (por ejemplo, 'admin' o 'usuario'). Si el usuario no existe, devuelve None.
-    """
-
-    conn = sqlite3.connect('usuarios.db')  # Ajusta la ruta a tu base de datos
-    cursor = conn.cursor()
-
-    cursor.execute('SELECT rol FROM usuarios WHERE usuario = ?', (usuario,))
-    resultado = cursor.fetchone()
-    global rol_usuario
-    rol_usuario = resultado[0]  # Almacena el rol en la variable global
-    conn.close()
-    return rol_usuario
-
-# Función para mostrar el gestor de archivos
 def mostrar_gestor_archivos(usuario):
-
-    global gestor_abierto, gestor
+    global gestor_abierto
 
     if gestor_abierto:
-        print("El gestor ya está abierto.")
-        return  # Si ya está abierto, no hacemos nada
-    
-    # Si no está abierto, creamos y mostramos la ventana del gestor
-    gestor_abierto = True  # Marcamos que el gestor está abierto
-    # Crear la carpeta base para el usuario
-    ruta_base_usuario = "C:/Users/mateo/OneDrive/Documentos/Sistema Operativo/users/" + usuario  # Adjust the path as needed
-    raiz = "C:/Users/mateo/OneDrive/Documentos/Sistema Operativo/users" # Adjust the path as needed
+        return
 
-    # Crear la ventana del gestor
-    global gestor  # Asegúrate de que el gestor se pueda referenciar en el cierre
-    gestor = ctk.CTk()
-    gestor.geometry("800x600")
-    gestor.title(f"Gestor de Archivos - {usuario}")
-    gestor.resizable(False, False)  # No permitir redimensionar la ventana
+    gestor_abierto = True
+    config.ensure_user_dirs(usuario)
+    ruta_base_usuario = str(config.get_user_dir(usuario))
+    raiz = str(config.USERS_DIR)
+    rol = obtener_rol(usuario)
+    limite = raiz if rol == "Administrador" else ruta_base_usuario
 
-    procesos_activos.append("Gestor de Archivos")  # Asegúrate de que procesos_activos esté definido
-    try:
-        actualizar_lista_procesos()  # Actualizar la visualización de procesos
-    except ValueError:
-        print("No se pudo actualizar el proceso")
-    except Exception as e:
-        print(f"Ocurrió un error con el gestor: {e}")      
-    # Frame principal
-    frame = ctk.CTkFrame(gestor, fg_color="#282c34")
+    ventana = ctk.CTkToplevel()
+    ventana.geometry("800x600")
+    ventana.title(f"Gestor de Archivos - {usuario}")
+    ventana.resizable(False, False)
+
+    procesos.register("Gestor de Archivos")
+
+    frame = ctk.CTkFrame(ventana, fg_color="#282c34")
     frame.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
 
-    # Función para listar archivos y carpetas dentro de la carpeta base del usuario
-
     def listar_archivos(ruta):
-        rol_usuario = None  # Variable global para almacenar el rol del usuario
-
-        if rol_usuario is None:
-            rol_usuario = obtener_rol(usuario)
-
-        if not ruta.startswith(ruta_base_usuario) and rol_usuario!="Administrador":  # Bloquea rutas fuera de la carpeta base
+        if not dentro_de(ruta, limite):
             messagebox.showerror("Error", "No tienes permiso para acceder a esta carpeta.")
             return
 
-        lista_archivos.delete(0, ctk.END)  # Limpiar la lista
+        lista_archivos.delete(0, END)
         try:
-            archivos = os.listdir(ruta)
-            for archivo in archivos:
-                lista_archivos.insert(ctk.END, archivo)
-        except PermissionError:
-            messagebox.showerror("Error", "Permiso denegado en este directorio")
+            for archivo in os.listdir(ruta):
+                lista_archivos.insert(END, archivo)
+        except (PermissionError, FileNotFoundError):
+            messagebox.showerror("Error", "No se pudo acceder a este directorio")
 
-
-    # Función para abrir PDFs y visualizarlos en una ventana
     def abrir_pdf(ruta_pdf):
         doc = fitz.open(ruta_pdf)
         ventana_pdf = ctk.CTkToplevel()
@@ -112,13 +82,11 @@ def mostrar_gestor_archivos(usuario):
                 pix = page.get_pixmap()
                 img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
                 imagen_tk = ImageTk.PhotoImage(img)
-
                 canvas.create_image(0, 0, anchor="nw", image=imagen_tk)
                 canvas.image = imagen_tk
                 canvas.config(scrollregion=canvas.bbox("all"))
 
-        # Variables y funciones para cambiar de página
-        pagina_actual = [0]  # Lista mutable para mantener referencia
+        pagina_actual = [0]
 
         def siguiente_pagina():
             if pagina_actual[0] + 1 < len(doc):
@@ -130,97 +98,93 @@ def mostrar_gestor_archivos(usuario):
                 pagina_actual[0] -= 1
                 mostrar_pagina(pagina_actual[0])
 
-        # Botones de navegación
         boton_atras = ctk.CTkButton(ventana_pdf, text="Anterior", command=pagina_anterior)
         boton_atras.pack(side="left", padx=5, pady=5)
 
         boton_siguiente = ctk.CTkButton(ventana_pdf, text="Siguiente", command=siguiente_pagina)
         boton_siguiente.pack(side="left", padx=5, pady=5)
 
-        mostrar_pagina(pagina_actual[0])  # Mostrar la primera página al inicio
+        mostrar_pagina(pagina_actual[0])
 
-        
-    # Función para abrir carpetas o archivos
     def abrir_item():
-        seleccionado = lista_archivos.get(ctk.ACTIVE)  # lista_archivos está aquí en gestorArchivos.py
+        seleccionado = lista_archivos.get(ACTIVE)
+        if not seleccionado:
+            return
+
         nueva_ruta = os.path.join(entry_ruta.get(), seleccionado)
-        
+
         if os.path.isdir(nueva_ruta):
-            # Si es una carpeta, navegar dentro de ella
-            entry_ruta.delete(0, ctk.END)
+            entry_ruta.delete(0, END)
             entry_ruta.insert(0, nueva_ruta)
             listar_archivos(nueva_ruta)
         elif seleccionado.endswith(".txt"):
-            # Pasar lista_archivos a la función abrir_txt
-            abrir_txt(nueva_ruta, lista_archivos)
+            abrir_txt(nueva_ruta)
         elif seleccionado.endswith(".pdf"):
             abrir_pdf(nueva_ruta)
-        elif seleccionado.endswith(".mp4") or seleccionado.endswith(".webm"):
-            # Si es un archivo de video (mp4 o webm), llamar a la función para abrirlo
-            abrir_video(nueva_ruta, usuario)  # Pasar la ruta del archivo de video
-        elif seleccionado.endswith(".png") or seleccionado.endswith(".jpg"):
-            # Si es un archivo de video (mp4 o webm), llamar a la función para abrirlo
-            abrir_visor_imagenes(nueva_ruta)  # Pasar la ruta del archivo de video
+        elif seleccionado.endswith((".mp4", ".webm")):
+            abrir_video(nueva_ruta, usuario)
+        elif seleccionado.endswith((".png", ".jpg", ".jpeg")):
+            abrir_visor_imagenes(nueva_ruta)
+        elif seleccionado.endswith((".mp3", ".wav", ".ogg")):
+            abrir_reproductor_audio(nueva_ruta)
         else:
             messagebox.showinfo("Información", f"No se puede abrir el archivo '{seleccionado}'.")
-    # Función para volver atrás en el directorio
+
     def volver_atras():
-        if raiz!=entry_ruta.get():
-            ruta_actual = entry_ruta.get()
-            ruta_padre = os.path.dirname(ruta_actual)
-            if ruta_padre.startswith(ruta_base_usuario) or rol_usuario=="Administrador":  # Solo permitir navegar dentro de la carpeta base
-                entry_ruta.delete(0, ctk.END)
-                entry_ruta.insert(0, ruta_padre)
-                listar_archivos(ruta_padre)
-            else:
-                messagebox.showerror("Error", "No puedes salir de tu carpeta principal.")
-        else:
-            messagebox.showerror("Error", "No puede acceder mas atras.")
-    def borrar_item():
-        seleccionado = lista_archivos.get(ctk.ACTIVE)
-        if not seleccionado:
-            messagebox.showwarning("Advertencia", "Por favor, selecciona un archivo o carpeta para eliminar.")
+        ruta_actual = os.path.abspath(entry_ruta.get())
+        if ruta_actual == os.path.abspath(raiz):
+            messagebox.showerror("Error", "No puede acceder más atrás.")
             return
 
-        # Confirmar eliminación
-        respuesta = messagebox.askyesno("Confirmar eliminación", f"¿Estás seguro de que deseas eliminar '{seleccionado}'?")
-        if respuesta:
-            ruta_a_borrar = os.path.join(entry_ruta.get(), seleccionado)
-            try:
-                if os.path.isfile(ruta_a_borrar):
-                    os.remove(ruta_a_borrar)  # Borrar archivo
-                else:
-                    os.rmdir(ruta_a_borrar)  # Borrar carpeta (debe estar vacía)
-                listar_archivos(entry_ruta.get())  # Actualizar la lista
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo eliminar '{seleccionado}': {e}")
+        ruta_padre = os.path.dirname(ruta_actual)
+        if not dentro_de(ruta_padre, limite):
+            messagebox.showerror("Error", "No puedes salir de tu carpeta principal.")
+            return
 
- # Ruta actual
+        entry_ruta.delete(0, END)
+        entry_ruta.insert(0, ruta_padre)
+        listar_archivos(ruta_padre)
+
+    def borrar_item():
+        seleccionado = lista_archivos.get(ACTIVE)
+        if not seleccionado:
+            messagebox.showwarning("Advertencia", "Selecciona un archivo o carpeta para eliminar.")
+            return
+
+        respuesta = messagebox.askyesno(
+            "Confirmar eliminación", f"¿Estás seguro de que deseas eliminar '{seleccionado}'?"
+        )
+        if not respuesta:
+            return
+
+        ruta_a_borrar = os.path.join(entry_ruta.get(), seleccionado)
+        try:
+            if os.path.isfile(ruta_a_borrar):
+                os.remove(ruta_a_borrar)
+            elif os.path.isdir(ruta_a_borrar):
+                shutil.rmtree(ruta_a_borrar)
+            listar_archivos(entry_ruta.get())
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo eliminar '{seleccionado}': {e}")
+
     entry_ruta = ctk.CTkEntry(frame, width=600)
     entry_ruta.grid(row=0, column=0, pady=10, padx=10)
-    entry_ruta.insert(0, ruta_base_usuario)  # Configurar la ruta inicial a la carpeta del usuario
+    entry_ruta.insert(0, ruta_base_usuario)
 
-    # Botón para volver atrás
     boton_atras = ctk.CTkButton(frame, text="Atrás", command=volver_atras)
     boton_atras.grid(row=0, column=1, pady=10, padx=10)
 
-    # Listbox para mostrar los archivos
     lista_archivos = Listbox(frame, height=20, width=80)
     lista_archivos.grid(row=1, column=0, pady=10, padx=10, columnspan=2)
-    listar_archivos(ruta_base_usuario)  # Listar archivos del directorio inicial
+    listar_archivos(ruta_base_usuario)
 
-    # Botón para abrir el archivo o carpeta seleccionada
     boton_abrir = ctk.CTkButton(frame, text="Abrir", command=abrir_item)
     boton_abrir.grid(row=2, column=0, pady=10, padx=10)
 
-    # Botón para borrar el archivo o carpeta seleccionada
     boton_borrar = ctk.CTkButton(frame, text="Borrar", command=borrar_item)
     boton_borrar.grid(row=2, column=1, pady=10, padx=10)
 
-
-    # Función para crear un archivo desde el proyecto
     def crear_archivo():
-        # Ventana emergente para pedir nombre del archivo
         ventana_archivo = ctk.CTkToplevel()
         ventana_archivo.title("Crear archivo")
 
@@ -230,7 +194,6 @@ def mostrar_gestor_archivos(usuario):
         entry_nombre_archivo = ctk.CTkEntry(ventana_archivo, width=300)
         entry_nombre_archivo.pack(padx=10, pady=10)
 
-        # Crear una lista de tipos de archivo, incluyendo "video"
         tipos_archivos = ["txt", "docx", "pdf", "csv", "xlsx", "jpg", "png", "video"]
 
         etiqueta_tipo = ctk.CTkLabel(ventana_archivo, text="Seleccione el tipo de archivo:")
@@ -238,83 +201,61 @@ def mostrar_gestor_archivos(usuario):
 
         combo_tipo_archivo = ttk.Combobox(ventana_archivo, values=tipos_archivos, state="readonly")
         combo_tipo_archivo.pack(padx=10, pady=10)
-        combo_tipo_archivo.current(0)  # Seleccionar el primer tipo por defecto
+        combo_tipo_archivo.current(0)
 
         def confirmar_creacion():
             nombre_archivo = entry_nombre_archivo.get()
             tipo_archivo = combo_tipo_archivo.get()
 
             if tipo_archivo == "video":
-                # Si el tipo de archivo es "video", llamar a la función de descarga de video
-                ventana_descarga_video(usuario)  # Llamamos a la ventana de descarga de video
-                ventana_archivo.destroy()  # Cerrar la ventana de creación de archivo inmediatamente
+                ventana_descarga_video(usuario)
+                ventana_archivo.destroy()
+                return
 
-            else:
-                # Si no es video, proceder a crear el archivo como antes
-                if nombre_archivo:
-                    nueva_ruta_archivo = os.path.join(entry_ruta.get(), f"{nombre_archivo}.{tipo_archivo}")
+            if not nombre_archivo:
+                return
 
-                    # Crear el archivo de texto
-                    if tipo_archivo == "txt":
-                        with open(nueva_ruta_archivo, 'w') as f:
-                            f.write("Nuevo archivo creado")
+            nueva_ruta_archivo = os.path.join(entry_ruta.get(), f"{nombre_archivo}.{tipo_archivo}")
 
-                    # Crear un archivo de Word (docx)
-                    elif tipo_archivo == "docx":
-                        doc = Document()
-                        doc.add_paragraph("Nuevo documento creado")
-                        doc.save(nueva_ruta_archivo)
+            if tipo_archivo == "txt":
+                with open(nueva_ruta_archivo, "w", encoding="utf-8") as f:
+                    f.write("Nuevo archivo creado")
+            elif tipo_archivo == "docx":
+                doc = Document()
+                doc.add_paragraph("Nuevo documento creado")
+                doc.save(nueva_ruta_archivo)
+            elif tipo_archivo == "pdf":
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 10, txt="Nuevo PDF creado", ln=True)
+                pdf.output(nueva_ruta_archivo)
+            elif tipo_archivo == "csv":
+                with open(nueva_ruta_archivo, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["Nuevo", "archivo", "CSV", "creado"])
+            elif tipo_archivo == "xlsx":
+                wb = Workbook()
+                ws = wb.active
+                ws.append(["Nuevo archivo", "Excel", "creado"])
+                wb.save(nueva_ruta_archivo)
+            elif tipo_archivo in ["jpg", "png"]:
+                with open(nueva_ruta_archivo, "wb") as f:
+                    f.write(b"")
 
-                    # Crear un archivo PDF
-                    elif tipo_archivo == "pdf":
-                        pdf = FPDF()
-                        pdf.add_page()
-                        pdf.set_font("Arial", size=12)
-                        pdf.cell(200, 10, txt="Nuevo PDF creado", ln=True)
-                        pdf.output(nueva_ruta_archivo)
+            listar_archivos(entry_ruta.get())
+            ventana_archivo.destroy()
 
-                    # Crear un archivo CSV
-                    elif tipo_archivo == "csv":
-                        with open(nueva_ruta_archivo, 'w', newline='') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(["Nuevo", "archivo", "CSV", "creado"])
-
-                    # Crear un archivo Excel
-                    elif tipo_archivo == "xlsx":
-                        wb = Workbook()
-                        ws = wb.active
-                        ws.append(["Nuevo archivo", "Excel", "creado"])
-                        wb.save(nueva_ruta_archivo)
-
-                    # Para imágenes, simplemente creamos un archivo vacío
-                    elif tipo_archivo in ["jpg", "png"]:
-                        with open(nueva_ruta_archivo, 'wb') as f:
-                            f.write(b'')  # Crear un archivo vacío (no será una imagen válida)
-
-                    # Listar los archivos después de crear
-                    listar_archivos(entry_ruta.get())
-                    ventana_archivo.destroy()
-
-        # Botón para confirmar la creación
         boton_confirmar = ctk.CTkButton(ventana_archivo, text="Crear", command=confirmar_creacion)
         boton_confirmar.pack(padx=10, pady=10)
 
-    # Botón para crear archivo
     boton_crear_archivo = ctk.CTkButton(frame, text="Crear Archivo", command=crear_archivo)
     boton_crear_archivo.grid(row=3, column=0, pady=10, padx=10)
+
     def on_close():
-        try:
-            actualizar_lista_procesos()  # Actualiza la lista de procesos al cerrar
-        except ValueError:
-            print("La gestor no estaba en la lista de procesos activos.")
-        except Exception as e:
-            print(f"Ocurrió un error al cerrar la gestor: {e}")
-        finally:
-            procesos_activos.remove("Gestor de Archivos")
-            gestor.destroy()
+        global gestor_abierto
+        procesos.unregister("Gestor de Archivos")
+        gestor_abierto = False
+        ventana.destroy()
 
-
-
-    gestor.protocol("WM_DELETE_WINDOW", on_close)
-
-    gestor.mainloop()
+    ventana.protocol("WM_DELETE_WINDOW", on_close)
